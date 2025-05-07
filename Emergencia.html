@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabela de Medicamentos, Tubo Endotraqueal e Ventilação Mecânica</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        input, select { padding: 5px; margin: 10px 5px; width: 200px; }
+        #search { width: 300px; }
+        .note { font-size: 0.9em; color: #555; margin-top: 10px; }
+        .highlight { background-color: yellow; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h2>Tabela de Medicamentos, Tubo Endotraqueal e Ventilação Mecânica</h2>
+    <div>
+        <label for="weight">Peso do Paciente (kg):</label>
+        <input type="number" id="weight" oninput="calculateDoses()" placeholder="Digite o peso">
+        <label for="age">Idade (anos):</label>
+        <input type="number" id="age" oninput="calculateDoses()" placeholder="Digite a idade">
+        <label for="sex">Sexo:</label>
+        <select id="sex" onchange="calculateDoses()">
+            <option value="none">Não especificado</option>
+            <option value="male">Masculino</option>
+            <option value="female">Feminino</option>
+        </select>
+    </div>
+    <div>
+        <label for="search">Buscar Medicamento:</label>
+        <input type="text" id="search" oninput="filterMedications()" placeholder="Digite o nome do medicamento">
+    </div>
+    <p id="error" class="error"></p>
+    <table id="medTable">
+        <tr>
+            <th>Medicamento</th>
+            <th>Indicação</th>
+            <th>Dose</th>
+            <th>Unidade</th>
+            <th>Volume</th>
+            <th>Volume Total com Diluição</th>
+            <th>Notas</th>
+            <th>Rota</th>
+        </tr>
+    </table>
+    <p id="ettSize"></p>
+    <p id="ventilationParams"></p>
+    <p class="note">Nota: O tamanho do tubo endotraqueal para crianças é estimado como (idade/4) + 4 mm (sem cuff) ou (idade/4) + 3,5 mm (com cuff); para adultos, use 7,0-7,5 mm (mulheres) ou 7,5-8,5 mm (homens). Os parâmetros de ventilação mecânica são estimativas e devem ser ajustados por um profissional.</p>
+
+    <script>
+        const meds = [
+            {
+                name: "Adenosina",
+                indication: "Taquicardia Supraventricular - Dose Inicial",
+                doseFormula: (W, age) => Math.min(0.1 * W, age < 1 ? 3 : 6),
+                unit: "mg",
+                concentration: 3,
+                volumeFormula: (W, age) => Math.min(0.1 * W, age < 1 ? 3 : 6) / 3,
+                dilutionNotes: "Diluir o volume calculado com 8 ml de SF 0,9% para total de 10 ml",
+                route: "IV rápido"
+            },
+            {
+                name: "Adenosina",
+                indication: "Taquicardia Supraventricular - Segunda Dose",
+                doseFormula: (W, age) => Math.min(0.2 * W, age < 1 ? 6 : 12),
+                unit: "mg",
+                concentration: 3,
+                volumeFormula: (W, age) => Math.min(0.2 * W, age < 1 ? 6 : 12) / 3,
+                dilutionNotes: "Diluir o volume calculado com 8 ml de SF 0,9% para total de 10 ml",
+                route: "IV rápido"
+            },
+            {
+                name: "Adrenalina",
+                indication: "Anafilaxia",
+                doseFormula: (W, age) => Math.min(0.01 * W, age < 1 ? 0.3 : 0.5),
+                unit: "mg",
+                concentration: 1,
+                volumeFormula: (W, age) => Math.min(0.01 * W, age < 1 ? 0.3 : 0.5) / 1,
+                dilutionNotes: "Sem diluição",
+                route: "IM"
+            },
+            {
+                name: "Adrenalina",
+                indication: "Parada Cardíaca",
+                doseFormula: (W, age) => W > 40 ? 1 : 0.01 * W,
+                unit: "mg",
+                concentration: 0.1,
+                volumeFormula: (W, age) => W > 40 ? 1 : (0.01 * W) / 0.1,
+                dilutionNotes: "Diluir 1 ml com 9 ml de SF 0,9% para total de 10 ml",
+                route: "IV"
+            },
+            {
+                name: "Amiodarona",
+                indication: "Parada Cardíaca",
+                doseFormula: (W, age) => W > 40 ? 300 : Math.min(5 * W, age < 1 ? 100 : 300),
+                unit: "mg",
+                concentration: 50,
+                volumeFormula: (W, age) => W > 40 ? 300 / 50 : (Math.min(5 * W, age < 1 ? 100 : 300)) / 50,
+                dilutionNotes: "Diluir em 20-30 ml de D5W ou SF 0,9%, administrar em 10 min",
+                route: "IV"
+            },
+            {
+                name: "Atropina",
+                indication: "Bradicardia",
+                doseFormula: (W, age) => Math.min(Math.max(0.02 * W, 0.1), W > 40 ? 0.5 : 1),
+                unit: "mg",
+                concentration: 0.5,
+                volumeFormula: (W, age) => Math.min(Math.max(0.02 * W, 0.1), W > 40 ? 0.5 : 1) / 0.5,
+                dilutionNotes: "Sem diluição",
+                route: "IV"
+            },
+            {
+                name: "Bicarbonato de Sódio 8,4%",
+                indication: "Acidose Metabólica",
+                doseFormula: (W, age) => W,
+                unit: "mEq",
+                concentration: 1,
+                volumeFormula: (W, age) => W,
+                dilutionNotes: "Pode ser diluído em SF 0,9% para administração lenta",
+                route: "IV"
+            },
+            {
+                name: "Cetamina",
+                indication: "Indução Anestésica",
+                doseFormula: (W, age) => 1.5 * W,
+                unit: "mg",
+                concentration: 50,
+                volumeFormula: (W, age) => (1.5 * W) / 50,
+                dilutionNotes: "Sem diluição",
+                route: "IV"
+            },
+            {
+                name: "Cloridrato de Biperideno",
+                indication: "Sintomas Extrapiramidais",
+                doseFormula: (W, age) => W > 40 ? 5 : 0.04 * W,
+                unit: "mg",
+                concentration: 5,
+                volumeFormula: (W, age) => (W > 40 ? 5 : 0.04 * W) / 5,
+                dilutionNotes: "Sem diluição",
+                route: "IV/IM"
+            },
+            {
+                name: "Dexametasona",
+                indication: "Inflamação",
+                doseFormula: (W, age) => Math.min(0.6 * W, age < 1 ? 4 : 10),
+                unit: "mg",
+                concentration: 4,
+                volumeFormula: (W, age) => Math.min(0.6 * W, age < 1 ? 4 : 10) / 4,
+                dilutionNotes: "Sem diluição",
+                route: "IV"
+            },
+            {
+                name: "Diazepam",
+                indication: "Estado Epiléptico",
+                doseFormula: (W, age) => Math.min(0.2 * W, age < 1 ? 5 : 10),
+                unit: "mg",
+                concentration: 5,
+                volumeFormula: (W, age) => Math.min(0.2 * W, age < 1 ? 5 : 10) / 5,
+                dilutionNotes: "Diluir o volume calculado com 8 ml de SF 0,9% para total de 10 ml",
+                route: "IV lento"
+            },
+            {
+                name: "Dobutamina",
+                indication: "Choque Cardiogênico",
+                doseFormula: (W, age) => 2 * W,
+                unit: "mcg/kg/min",
+                concentration: 12.5,
+                volumeFormula: (W, age) => {
+                    const doseMcgKgMin = 2 * W;
+                    const concentrationMcgMl = 12.5 * 1000;
+                    return (doseMcgKgMin * W * 60) / concentrationMcgMl;
+                },
+                dilutionNotes: (W) => {
+                    const doseMcgMin = 2 * W; // mcg/min
+                    const doseMcgH = doseMcgMin * 60; // mcg/h
+                    const infusionRate = 10; // ml/h
+                    const concentrationMcgMl = doseMcgH / infusionRate; // mcg/ml
+                    const totalMcg = concentrationMcgMl * 100; // mcg em 100 ml
+                    const totalMg = totalMcg / 1000; // mg
+                    const volumeToAdd = totalMg / 12.5; // ml
+                    return `Adicionar ${volumeToAdd.toFixed(2)} ml a 100 ml de SF 0,9%; taxa de infusão: ${infusionRate} ml/h`;
+                },
+                route: "IV infusão"
+            },
+            {
+                name: "Dopamina",
+                indication: "Choque",
+                doseFormula: (W, age) => 2 * W,
+                unit: "mcg/kg/min",
+                concentration: 5,
+                volumeFormula: (W, age) => {
+                    const doseMcgKgMin = 2 * W;
+                    const concentrationMcgMl = 5 * 1000;
+                    return (doseMcgKgMin * W * 60) / concentrationMcgMl;
+                },
+                dilutionNotes: (W) => {
+                    const doseMcgMin = 2 * W; // mcg/min
+                    const doseMcgH = doseMcgMin * 60; // mcg/h
+                    const infusionRate = 10; // ml/h
+                    const concentrationMcgMl = doseMcgH / infusionRate; // mcg/ml
+                    const totalMcg = concentrationMcgMl * 100; // mcg em 100 ml
+                    const totalMg = totalMcg / 1000; // mg
+                    const volumeToAdd = totalMg / 5; // ml
+                    return `Adicionar ${volumeToAdd.toFixed(2)} ml a 100 ml de SF 0,9%; taxa de infusão: ${infusionRate} ml/h`;
+                },
+                route: "IV infusão"
+            },
+            {
+                name: "Fenitoína",
+                indication: "Convulsões",
+                doseFormula: (W, age) => Math.min(15 * W, age < 1 ? 500 : 1000),
+                unit: "mg",
+                concentration: 50,
+                volumeFormula: (W, age) => Math.min(15 * W, age < 1 ? 500 : 1000) / 50,
+                dilutionNotes: "Diluir em SF 0,9%, administrar lentamente",
+                route: "IV"
+            },
+            {
+                name: "Fenobarbital",
+                indication: "Convulsões",
+                doseFormula: (W, age) => Math.min(20 * W, age < 1 ? 500 : 1000),
+                unit: "mg",
+                concentration: 100,
+                volumeFormula: (W, age) => Math.min(20 * W, age < 1 ? 500 : 1000) / 100,
+                dilutionNotes: "Diluir o volume calculado com 8 ml de SF 0,9% para total de 10 ml",
+                route: "IV"
+            },
+            {
+                name: "Flumazenil",
+                indication: "Sobredose de Benzodiazepínicos",
+                doseFormula: (W, age) => W > 40 ? 0.2 : 0.01 * W,
+                unit: "mg",
+                concentration: 0.1,
+                volumeFormula: (W, age) => (W > 40 ? 0.2 : 0.01 * W) / 0.1,
+                dilutionNotes: "Sem diluição",
+                route: "IV"
+            },
+            {
+                name: "Furosemida",
+                indication: "Edema",
+                doseFormula: (W, age) => Math.min(1 * W, age < 1 ? 20 : 40),
+                unit: "mg",
+                concentration: 20,
+                volumeFormula: (W, age) => Math.min(1 * W, age < 1 ? 20 : 40) / 20,
+                dilutionNotes: "Diluir o volume calculado com 8 ml de SF 0,9% para total de 10 ml",
+                route: "IV"
+            },
+            {
+                name: "Glicose 50%",
+                indication: "Hipoglicemia",
+                doseFormula: (W, age) => W > 40 ? 25 : Math.min(0.5 * W, age < 1 ? 5 : 10),
+                unit: "ml",
+                concentration: 0.5,
+                volumeFormula: (W, age) => W > 40 ? 25 : Math.min(0.5 * W, age < 1 ? 5 : 10),
+                dilutionNotes: "Sem diluição",
+                route: "IV"
+            },
+            {
+                name: "Haloperidol",
+                indication: "Agitação Psicomotora",
+                doseFormula: (W, age) => W > 40 ? 5 : Math.min(0.1 * W, age < 12 ? 2.5 : 5),
+                unit: "mg",
+                concentration: 5,
+                volumeFormula: (W, age) => (W > 40 ? 5 : Math.min(0.1 * W, age < 12 ? 2.5 : 5)) / 5,
+                dilutionNotes: "Diluir o volume calculado com 9 ml de SF 0,9% para total de 10 ml",
+                route: "IV"
+            },
+            {
+                name: "Hidrocortisona",
+                indication: "Insuficiência Adrenal",
+                doseFormula: (W, age) => W > 40 ? 100 : 2 * W,
+                unit: "mg",
+                concentration: null,
+                volumeFormula: (W, age) => null,
+                dilutionNotes: "Reconstituir com diluente fornecido",
+                route: "IV"
+            },
+            {
+                name: "Lidocaína",
+                indication: "Arritmia",
+                doseFormula: (W, age) => Math.min(1 * W, age < 1 ? 50 : 100),
+                unit: "mg",
+                concentration: 20,
+                volumeFormula: (W, age) => Math.min(1 * W, age < 1 ? 50 : 100) / 20,
+                dilutionNotes: "Sem diluição",
+                route: "IV"
+            },
+            {
+                name: "Midazolam",
+                indication: "Sedação",
+                doseFormula: (W, age) => Math.min(0.1 * W, age < 1 ? 2 : 5),
+                unit: "mg",
+                concentration: 5,
+                volumeFormula: (W, age) => Math.min(0.1 * W, age < 1 ? 2 : 5) / 5,
+                dilutionNotes: "Sem diluição",
+                route: "IV"
+            },
+            {
+                name: "Naloxona",
+                indication: "Sobredose de Opioides",
+                doseFormula: (W, age) => Math.min(0.04 * W, age < 1 ? 1 : 2),
+                unit: "mg",
+                concentration: 0.4,
+                volumeFormula: (W, age) => Math.min(0.04 * W, age < 1 ? 1 : 2) / 0.4,
+                dilutionNotes: "Diluir o volume calculado com 9 ml de SF 0,9% para total de 10 ml",
+                route: "IV"
+            },
+            {
+                name: "Norepinefrina",
+                indication: "Choque",
+                doseFormula: (W, age) => 0.1 * W,
+                unit: "mcg/kg/min",
+                concentration: 2,
+                volumeFormula: (W, age) => {
+                    const doseMcgKgMin = 0.1 * W;
+                    const concentrationMcgMl = 2 * 1000;
+                    return (doseMcgKgMin * W * 60) / concentrationMcgMl;
+                },
+                dilutionNotes: "Diluir em SF 0,9% ou D5W para infusão; volume calculado é a taxa de infusão (ml/h)",
+                route: "IV infusão"
+            },
+            {
+                name: "Prometazina",
+                indication: "Náusea",
+                doseFormula: (W, age) => Math.min(1 * W, age < 12 ? 12.5 : 25),
+                unit: "mg",
+                concentration: 25,
+                volumeFormula: (W, age) => Math.min(1 * W, age < 12 ? 12.5 : 25) / 25,
+                dilutionNotes: "Diluir o volume calculado com 8 ml de SF 0,9% para total de 10 ml",
+                route: "IV lento"
+            },
+            {
+                name: "Sulfato de Magnésio",
+                indication: "Eclampsia",
+                doseFormula: (W, age) => W > 40 ? 4 : 0.05 * W,
+                unit: "g",
+                concentration: 0.5,
+                volumeFormula: (W, age) => (W > 40 ? 4 : 0.05 * W) / 0.5,
+                dilutionNotes: "Diluir em SF 0,9% para administração lenta",
+                route: "IV"
+            },
+            {
+                name: "Suxametônio",
+                indication: "Intubação Rápida",
+                doseFormula: (W, age) => 1.5 * W,
+                unit: "mg",
+                concentration: 50,
+                volumeFormula: (W, age) => (1.5 * W) / 50,
+                dilutionNotes: "Diluir o volume calculado com SF 0,9% para total de 10 ml",
+                route: "IV"
+            },
+            {
+                name: "Manitol",
+                indication: "Pressão Intracraniana",
+                doseFormula: (W, age) => Math.min(0.5 * W, 50),
+                unit: "g",
+                concentration: 0.2,
+                volumeFormula: (W, age) => Math.min(0.5 * W, 50) / 0.2,
+                dilutionNotes: "Administrar diretamente",
+                route: "IV"
+            },
+            {
+                name: "Cloreto de Sódio 0,9%",
+                indication: "Reanimação",
+                doseFormula: (W, age) => 20 * W,
+                unit: "ml",
+                concentration: null,
+                volumeFormula: (W, age) => 20 * W,
+                dilutionNotes: "Bolus inicial para reanimação; disponível em 10ml, 100ml, 250ml, 500ml",
+                route: "IV"
+            },
+            {
+                name: "Ringer Lactato",
+                indication: "Reanimação",
+                doseFormula: (W, age) => 20 * W,
+                unit: "ml",
+                concentration: null,
+                volumeFormula: (W, age) => 20 * W,
+                dilutionNotes: "Bolus inicial para reanimação; disponível em 500ml",
+                route: "IV"
+            },
+            {
+                name: "Solução Glicose 5%",
+                indication: "Manutenção",
+                doseFormula: (W, age) => null,
+                unit: "ml",
+                concentration: null,
+                volumeFormula: (W, age) => null,
+                dilutionNotes: "Para manutenção ou outros usos; disponível em 250ml, 500ml",
+                route: "IV"
+            },
+            {
+                name: "Água para Injetáveis",
+                indication: "Diluente",
+                doseFormula: (W, age) => null,
+                unit: "ml",
+                concentration: null,
+                volumeFormula: (W, age) => 20,
+                dilutionNotes: "Para diluir medicamentos",
+                route: "IV"
+            }
+        ];
+
+        function shouldDisplayMedication(med, searchTerm) {
+            if (!med.name.toLowerCase().includes(searchTerm)) {
+                return false;
+            }
+            return true;
+        }
+
+        function calculateDoses() {
+            const W = parseFloat(document.getElementById('weight').value);
+            const age = parseFloat(document.getElementById('age').value);
+            const sex = document.getElementById('sex').value;
+            const table = document.getElementById('medTable');
+            const error = document.getElementById('error');
+            const ettSize = document.getElementById('ettSize');
+            const ventilationParams = document.getElementById('ventilationParams');
+
+            // Clear previous rows
+            while (table.rows.length > 1) {
+                table.deleteRow(1);
+            }
+
+            // Validate inputs
+            if (isNaN(W) || W <= 0 || isNaN(age) || age < 0) {
+                error.textContent = 'Por favor, insira um peso e uma idade válidos.';
+                ettSize.textContent = '';
+                ventilationParams.textContent = '';
+                return;
+            } else {
+                error.textContent = '';
+            }
+
+            // Filter and display medications
+            const searchTerm = document.getElementById('search').value.toLowerCase();
+            meds.forEach(med => {
+                if (shouldDisplayMedication(med, searchTerm)) {
+                    const dose = typeof med.doseFormula === 'function' ? med.doseFormula(W, age) : null;
+                    const volume = typeof med.volumeFormula === 'function' ? med.volumeFormula(W, age) : null;
+                    const dilutionNotes = typeof med.dilutionNotes === 'function' ? med.dilutionNotes(W) : med.dilutionNotes;
+                    const row = table.insertRow();
+                    if (dilutionNotes && dilutionNotes.includes("Diluir")) {
+                        row.classList.add("highlight");
+                    }
+                    row.insertCell(0).textContent = med.name;
+                    row.insertCell(1).textContent = med.indication;
+                    row.insertCell(2).textContent = dose !== null && !isNaN(dose) ? dose.toFixed(2) : '-';
+                    row.insertCell(3).textContent = med.unit || '-';
+                    row.insertCell(4).textContent = volume !== null && !isNaN(volume) ? 
+                        (med.unit === "mcg/kg/min" ? `${volume.toFixed(2)} ml/h` : `${volume.toFixed(2)} ml`) : '-';
+                    row.insertCell(5).textContent = dilutionNotes && dilutionNotes.includes("total de") ? 
+                        dilutionNotes.split("para total de")[1].trim() : '-';
+                    row.insertCell(6).textContent = dilutionNotes || '-';
+                    row.insertCell(7).textContent = med.route || '-';
+                }
+            });
+
+            // Calculate ETT size
+            let ettText = '';
+            if (age < 18) {
+                const ettUncuffed = (age / 4) + 4;
+                const ettCuffed = (age / 4) + 3.5;
+                ettText = `Tamanho do Tubo Endotraqueal: ${ettUncuffed.toFixed(1)} mm (sem cuff), ${ettCuffed.toFixed(1)} mm (com cuff)`;
+            } else {
+                ettText = `Tamanho do Tubo Endotraqueal: ${sex === 'female' ? '7,0-7,5 mm' : sex === 'male' ? '7,5-8,5 mm' : '7,0-8,5 mm'} (adulto)`;
+            }
+            ettSize.textContent = ettText;
+
+            // Calculate ventilation parameters
+            const tidalVolume = 7 * W; // 7 ml/kg
+            const respiratoryRate = age < 2 ? '20-30' : age < 12 ? '15-20' : '10-12';
+            const inspiratoryPressure = age < 18 ? '15-20' : '20-30';
+            ventilationParams.textContent = `Parâmetros de Ventilação Mecânica: Volume Corrente: ${tidalVolume.toFixed(0)} ml, Frequência Respiratória: ${respiratoryRate} rpm, Pressão Inspiratória: ${inspiratoryPressure} cmH₂O`;
+        }
+
+        function filterMedications() {
+            calculateDoses();
+        }
+
+        window.onload = calculateDoses;
+    </script>
+</body>
+</html>
